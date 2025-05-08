@@ -15,12 +15,17 @@ const mouse = new THREE.Vector2();
 let currentIntersected = null;
 
 // 物理相關常數
-const GRAVITY = 0.2;
-const JUMP_FORCE = 0.5;
+const GRAVITY = 0.15; // 降低重力讓玩家在空中停留更久
+const JUMP_FORCE = 0.8; // 增加跳躍力度
 const PLAYER_HEIGHT = 2;
 
 // 手臂相關
 let arm;
+
+// 新增果實相關變數
+let heldItem = null; // 目前手持的物品
+const fruits = []; // 儲存所有果實
+const FRUIT_RESPAWN_TIME = 30000; // 果實重生時間（毫秒）
 
 // 初始化遊戲
 function init() {
@@ -67,6 +72,7 @@ function init() {
         setupEventListeners();
 
         // 添加滑鼠點擊事件
+        document.addEventListener('contextmenu', (e) => e.preventDefault()); // 防止右鍵選單出現
         document.addEventListener('mousedown', onMouseDown);
 
         // 開始動畫循環
@@ -78,12 +84,22 @@ function init() {
 
 // 創建地面
 function createGround() {
-    const groundGeometry = new THREE.PlaneGeometry(200, 200); // 擴大地面大小
+    const blockSize = 1; // 每個方塊的大小
+    const worldSize = 200; // 世界大小
+    const halfWorldSize = worldSize / 2;
+    
     const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x567d46 });
-    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-    ground.rotation.x = -Math.PI / 2;
-    scene.add(ground);
-    objects.push(ground);
+    const blockGeometry = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
+
+    // 創建地面方塊網格
+    for (let x = -halfWorldSize; x < halfWorldSize; x += blockSize) {
+        for (let z = -halfWorldSize; z < halfWorldSize; z += blockSize) {
+            const block = new THREE.Mesh(blockGeometry, groundMaterial);
+            block.position.set(x, -0.5, z); // y 設為 -0.5 使方塊頂部與 y=0 平齊
+            scene.add(block);
+            objects.push(block);
+        }
+    }
 }
 
 // 創建方塊
@@ -119,6 +135,9 @@ function createTree(x, z) {
     leaves.position.set(x, 5, z);
     scene.add(leaves);
     objects.push(leaves);
+
+    // 在樹葉位置添加果實
+    addFruitsToTree(x, 5, z);
 }
 
 // 在初始化時添加樹木
@@ -141,6 +160,77 @@ function createArm() {
     arm.position.set(0.7, -0.5, -1);
     arm.rotation.y = Math.PI / 6;
     camera.add(arm);
+}
+
+// 創建果實
+function createFruit(x, y, z) {
+    const fruitGeometry = new THREE.SphereGeometry(0.2, 8, 8);
+    const fruitMaterial = new THREE.MeshLambertMaterial({ color: 0xFF6B6B }); // 紅色的果實
+    const fruit = new THREE.Mesh(fruitGeometry, fruitMaterial);
+    fruit.position.set(x, y, z);
+    fruit.isFruit = true; // 標記這是果實
+    fruit.isCollectable = true; // 可以被採集
+    scene.add(fruit);
+    fruits.push(fruit);
+    objects.push(fruit);
+    return fruit;
+}
+
+// 在樹上生成果實
+function addFruitsToTree(x, y, z) {
+    // 在樹葉周圍隨機生成 3-5 個果實
+    const fruitCount = Math.floor(Math.random() * 3) + 3;
+    for (let i = 0; i < fruitCount; i++) {
+        const offsetX = (Math.random() - 0.5) * 2;
+        const offsetY = (Math.random() - 0.5) * 2;
+        const offsetZ = (Math.random() - 0.5) * 2;
+        createFruit(x + offsetX, y + offsetY, z + offsetZ);
+    }
+}
+
+// 採集果實
+function collectFruit(fruit) {
+    if (fruit.isCollectable) {
+        scene.remove(fruit);
+        const index = objects.indexOf(fruit);
+        if (index > -1) {
+            objects.splice(index, 1);
+        }
+        const fruitIndex = fruits.indexOf(fruit);
+        if (fruitIndex > -1) {
+            fruits.splice(fruitIndex, 1);
+        }
+        
+        // 設置手持的果實
+        if (!heldItem) {
+            heldItem = createHeldFruit();
+        }
+
+        // 設定果實重生
+        setTimeout(() => {
+            const newFruit = createFruit(fruit.position.x, fruit.position.y, fruit.position.z);
+            newFruit.isCollectable = true;
+        }, FRUIT_RESPAWN_TIME);
+    }
+}
+
+// 創建手持的果實
+function createHeldFruit() {
+    const fruitGeometry = new THREE.SphereGeometry(0.15, 8, 8);
+    const fruitMaterial = new THREE.MeshLambertMaterial({ color: 0xFF6B6B });
+    const fruit = new THREE.Mesh(fruitGeometry, fruitMaterial);
+    fruit.position.set(0.5, -0.3, -1);
+    camera.add(fruit);
+    return fruit;
+}
+
+// 吃掉果實
+function eatFruit() {
+    if (heldItem) {
+        camera.remove(heldItem);
+        heldItem = null;
+        // 這裡可以添加吃東西的效果，比如回血或加分
+    }
 }
 
 // 設置事件監聽器
@@ -190,6 +280,20 @@ function onMouseDown(event) {
             
             // 播放手臂動畫
             playArmAnimation();
+        }
+    } else if (event.button === 2) { // 右鍵點擊
+        if (heldItem) {
+            // 如果手上有果實，就吃掉
+            eatFruit();
+        } else {
+            // 否則嘗試採集果實
+            const intersects = checkIntersection();
+            if (intersects.length > 0) {
+                const intersected = intersects[0].object;
+                if (intersected.isFruit && intersected.isCollectable) {
+                    collectFruit(intersected);
+                }
+            }
         }
     }
 }
